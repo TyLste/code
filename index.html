@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Objectif Code</title>
+  <meta name="description" content="Plan d'apprentissage et suivi de progression pour réussir l'examen du code de la route.">
+  <meta name="theme-color" content="#1d4ed8">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Objectif Code">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-sign" aria-hidden="true">35</span>
+      <div>
+        <div class="brand-title">Objectif Code</div>
+        <div class="brand-sub" id="brandSub">Plan sur 8 semaines</div>
+      </div>
+    </div>
+    <button class="icon-btn" id="btnSettings" aria-label="Réglages">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+    </button>
+  </header>
+
+  <main id="main">
+    <section class="view" id="view-today" data-view="today"></section>
+    <section class="view" id="view-plan" data-view="plan" hidden></section>
+    <section class="view" id="view-scores" data-view="scores" hidden></section>
+    <section class="view" id="view-carnet" data-view="carnet" hidden></section>
+    <section class="view" id="view-fiches" data-view="fiches" hidden></section>
+  </main>
+
+  <nav class="tabbar" aria-label="Navigation">
+    <button data-tab="today" class="active">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></svg>
+      <span>Aujourd'hui</span>
+    </button>
+    <button data-tab="plan">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
+      <span>Plan</span>
+    </button>
+    <button data-tab="scores">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+      <span>Scores</span>
+    </button>
+    <button data-tab="carnet">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h11a2 2 0 0 1 2 2v16l-4-2-4 2-4-2-3 2V5a2 2 0 0 1 2-2zM9 8h6M9 12h6"/></svg>
+      <span>Carnet</span>
+    </button>
+    <button data-tab="fiches">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 16H3zM12 10v4M12 17v.5"/></svg>
+      <span>Fiches</span>
+    </button>
+  </nav>
+
+  <dialog id="modal">
+    <div class="modal-inner">
+      <div class="modal-head">
+        <h2 id="modalTitle"></h2>
+        <button class="icon-btn" data-close aria-label="Fermer">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div id="modalBody"></div>
+    </div>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/plan.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
