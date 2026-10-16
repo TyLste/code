@@ -143,6 +143,7 @@ const LESSONS = {
       'Perte de tous les points : permis invalidé.',
       'Stages de récupération de points : possibles dans certaines conditions.',
       'Conduire avec 0,8 g/L d\'alcool ou plus dans le sang (0,40 mg/L d\'air) est un délit, jugé au tribunal.',
+      'Depuis le 29 décembre 2025, un excès de vitesse de 50 km/h ou plus est aussi un délit, dès la première fois.',
       'Retrait de points : il dépend de la gravité de l\'infraction.'
     ]
   },
@@ -471,6 +472,14 @@ function buildPlan() {
       { title: 'Note ton résultat', min: 1, kind: 'check',
         detail: 'Le résultat arrive généralement par e-mail dans les jours qui suivent. Bravo pour le travail fourni !' }
     ]
+  });
+
+  /* Chaque jour (sauf le jour J) se termine par 10 minutes d'entraînement aux chiffres.
+     Ajoutée en dernière position pour ne pas décaler les tâches déjà cochées. */
+  days.forEach(d => {
+    if (d.type === 'jourj') return;
+    d.tasks.push({ title: '10 minutes de chiffres', min: 10, kind: 'chiffres',
+      detail: 'Une session de l\'onglet Chiffres : vitesses, distances, alcool, amendes, points, pourcentages. Les chiffres ratés reviennent plus souvent, ceux que tu connais s\'espacent.' });
   });
 
   return days.map((d, i) => Object.assign(d, { n: i + 1 }));

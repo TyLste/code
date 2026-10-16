@@ -1,11 +1,12 @@
 /* Service worker : fonctionnement hors connexion.
    Après une modification des fichiers, changez VERSION pour forcer la mise à jour. */
-const VERSION = 'objectif-code-v1';
+const VERSION = 'objectif-code-v3';
 const ASSETS = [
   './',
   './index.html',
   './css/style.css',
   './js/plan.js',
+  './js/numbers.js',
   './js/app.js',
   './manifest.webmanifest',
   './icons/icon-192.png',

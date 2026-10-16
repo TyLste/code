@@ -31,14 +31,76 @@
   const themeById = id => THEMES.find(t => t.id === id);
   const themeName = id => (themeById(id) || {}).name || 'Sans thème';
   const themeShort = id => (themeById(id) || {}).short || 'Sans thème';
+  const tkey = (n, i) => n + '-' + i;
+  const pkey = (n, i, p) => n + '-' + i + '-p' + p;
+  /* Répétition espacée des chiffres : intervalle en jours selon la boîte (0 = à revoir aujourd'hui). */
+  const NUM_INTERVALS = [0, 1, 2, 4, 7, 15];
+  const NUM_MASTERED = 3;
+  const NUM_SESSION = 10;
 
   /* ---------- État ---------- */
   function defaults() {
-    return { v: 1, onboarded: false, profile: { name: '', start: todayISO() }, theme: 'auto',
-      tasks: {}, scores: [], errors: [], activity: {} };
+    return { v: 2, onboarded: false, profile: { name: '', start: todayISO() }, theme: 'auto',
+      tasks: {}, scores: [], errors: [], activity: {}, num: {} };
   }
+  /* Nettoie des données chargées ou importées : ne garde que les champs attendus,
+     avec le bon type, pour qu'un fichier de sauvegarde modifié ne puisse rien injecter. */
+  const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const str = (v, max = 500) => typeof v === 'string' ? v.slice(0, max) : '';
+  const int = (v, min, max, dflt) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= min && n <= max ? n : dflt; };
+  const isoOr = (v, dflt) => typeof v === 'string' && ISO_RE.test(v) && !isNaN(parseISO(v)) ? v : dflt;
+  const safeId = v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(v) ? v : uid();
+  const themeOk = v => THEMES.some(t => t.id === v) ? v : null;
+  function sanitize(raw) {
+    const d = defaults();
+    if (!raw || typeof raw !== 'object') return d;
+    d.onboarded = raw.onboarded === true;
+    d.profile = { name: str(raw.profile && raw.profile.name, 60), start: isoOr(raw.profile && raw.profile.start, todayISO()) };
+    d.theme = ['auto', 'light', 'dark'].includes(raw.theme) ? raw.theme : 'auto';
+    if (raw.tasks && typeof raw.tasks === 'object') {
+      Object.keys(raw.tasks).forEach(k => { if (/^\d{1,3}-\d{1,2}(-p\d{1,2})?$/.test(k)) d.tasks[k] = raw.tasks[k] === true; });
+    }
+    if (raw.activity && typeof raw.activity === 'object') {
+      Object.keys(raw.activity).forEach(k => { if (ISO_RE.test(k)) d.activity[k] = 1; });
+    }
+    if (Array.isArray(raw.scores)) {
+      d.scores = raw.scores.slice(0, 5000).filter(s => s && typeof s === 'object').map(s => {
+        const type = s.type === 'theme' ? 'theme' : 'serie';
+        const total = type === 'serie' ? 40 : int(s.total, 1, 100, 30);
+        return { id: safeId(s.id), ts: int(s.ts, 0, 9e15, 0), date: isoOr(s.date, todayISO()),
+          score: int(s.score, 0, total, 0), total, type, theme: type === 'theme' ? themeOk(s.theme) : null,
+          task: typeof s.task === 'string' && /^\d{1,3}-\d{1,2}$/.test(s.task) ? s.task : null };
+      });
+    }
+    if (Array.isArray(raw.errors)) {
+      d.errors = raw.errors.slice(0, 5000).filter(e => e && typeof e === 'object').map(e => ({
+        id: safeId(e.id), ts: int(e.ts, 0, 9e15, 0), date: isoOr(e.date, todayISO()),
+        theme: themeOk(e.theme) || THEMES[0].id, question: str(e.question) || 'Question sans titre',
+        rule: str(e.rule), cause: CAUSES.includes(e.cause) ? e.cause : CAUSES[0], note: str(e.note, 300),
+        ok: int(e.ok, 0, MASTER_STREAK, 0), mastered: e.mastered === true, lastReview: str(e.lastReview, 40)
+      }));
+    }
+    if (raw.num && typeof raw.num === 'object') {
+      NUM_CARDS.forEach(c => {
+        const s = raw.num[c.id];
+        if (s && typeof s === 'object') d.num[c.id] = { box: int(s.box, 0, NUM_INTERVALS.length - 1, 0), due: isoOr(s.due, todayISO()),
+          right: int(s.right, 0, 1e6, 0), wrong: int(s.wrong, 0, 1e6, 0) };
+      });
+    }
+    /* Version 1 → 2 : la tâche « chiffres » a été ajoutée en fin de journée.
+       Un jour déjà terminé avant la mise à jour reste terminé. */
+    if (raw.v !== 2) {
+      PLAN.forEach(day => {
+        const last = day.tasks.length - 1;
+        if (day.tasks[last].kind !== 'chiffres') return;
+        if (day.tasks.slice(0, last).every((_, i) => d.tasks[tkey(day.n, i)])) d.tasks[tkey(day.n, last)] = true;
+      });
+    }
+    return d;
+  }
+
   let state;
-  try { state = Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY)) || {}); }
+  try { state = sanitize(JSON.parse(localStorage.getItem(KEY))); }
   catch (e) { state = defaults(); }
 
   function save() {
@@ -48,8 +110,6 @@
   function touch() { state.activity[todayISO()] = 1; }
 
   /* ---------- Calculs ---------- */
-  const tkey = (n, i) => n + '-' + i;
-  const pkey = (n, i, p) => n + '-' + i + '-p' + p;
 
   function taskDone(n, i) { return !!state.tasks[tkey(n, i)]; }
   function dayProgress(day) {
@@ -115,6 +175,52 @@
       .sort((a, b) => (a.lastReview || '').localeCompare(b.lastReview || '') || (a.ok || 0) - (b.ok || 0));
   }
 
+  /* ---------- Chiffres : calculs ---------- */
+  const numCard = id => NUM_CARDS.find(c => c.id === id);
+  const numCat = id => NUM_CATS.find(c => c.id === id) || { name: '', icon: '' };
+  const numState = id => state.num[id] || null;
+  const numMastered = id => { const s = numState(id); return !!s && s.box >= NUM_MASTERED; };
+  const numDue = id => { const s = numState(id); return !!s && s.due <= todayISO(); };
+  function numStats(cat) {
+    const cards = NUM_CARDS.filter(c => !cat || c.cat === cat);
+    const seen = cards.filter(c => numState(c.id));
+    return { total: cards.length, seen: seen.length, mastered: cards.filter(c => numMastered(c.id)).length,
+      due: seen.filter(c => numDue(c.id)).length, fresh: cards.length - seen.length };
+  }
+  /* File d'une session : d'abord les cartes à revoir (les plus fragiles en premier),
+     puis des cartes jamais vues, puis les moins solides si tout est à jour. */
+  function numQueue(cat) {
+    const pool = NUM_CARDS.filter(c => !cat || c.cat === cat);
+    const due = pool.filter(c => numDue(c.id))
+      .sort((a, b) => numState(a.id).box - numState(b.id).box || numState(a.id).due.localeCompare(numState(b.id).due));
+    const fresh = pool.filter(c => !numState(c.id));
+    let q = due.slice(0, NUM_SESSION);
+    if (q.length < NUM_SESSION) q = q.concat(fresh.slice(0, NUM_SESSION - q.length));
+    if (q.length < NUM_SESSION) {
+      const rest = pool.filter(c => !q.includes(c))
+        .sort((a, b) => numState(a.id).box - numState(b.id).box || numState(a.id).due.localeCompare(numState(b.id).due));
+      q = q.concat(rest.slice(0, NUM_SESSION - q.length));
+    }
+    return q.map(c => c.id);
+  }
+  function numAnswer(id, ok) {
+    const s = state.num[id] || { box: 0, due: todayISO(), right: 0, wrong: 0 };
+    if (ok) { s.box = Math.min(NUM_INTERVALS.length - 1, s.box + 1); s.right++; }
+    else { s.box = 0; s.wrong++; }
+    s.due = addDays(todayISO(), NUM_INTERVALS[s.box]);
+    state.num[id] = s;
+  }
+  function weakNumCat() {
+    let best = null, bestScore = -1;
+    NUM_CATS.forEach(c => {
+      const st = numStats(c.id);
+      const sc = (st.total - st.mastered) / st.total;
+      if (st.seen && sc > bestScore) { bestScore = sc; best = c.id; }
+    });
+    return best;
+  }
+  function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
   /* ---------- Toast ---------- */
   let toastTimer;
   function toast(msg) {
@@ -123,7 +229,7 @@
   }
 
   /* ---------- Rendu : une journée ---------- */
-  const kindLabel = { lesson: 'Cours', check: 'Tâche', score: 'Score', carnet: 'Carnet', review: 'Révision', fiches: 'Fiches' };
+  const kindLabel = { lesson: 'Cours', check: 'Tâche', score: 'Score', carnet: 'Carnet', review: 'Révision', fiches: 'Fiches', chiffres: 'Chiffres' };
 
   function renderTask(day, i, task) {
     const done = taskDone(day.n, i);
@@ -159,6 +265,10 @@
         (q ? '' : '<span class="small muted">Aucune fiche à revoir pour l\'instant : coche simplement la tâche.</span>') + '</div>';
     } else if (task.kind === 'fiches') {
       extra = '<div class="task-actions"><button class="btn small" data-action="goto-fiches">Ouvrir les fiches</button></div>';
+    } else if (task.kind === 'chiffres') {
+      const st = numStats();
+      extra = '<div class="task-actions"><button class="btn small primary" data-action="num-start" data-n="' + day.n + '" data-i="' + i + '">Lancer la session</button>' +
+        '<span class="small muted">' + (st.due ? st.due + ' à revoir · ' : '') + st.mastered + '/' + st.total + ' maîtrisés</span></div>';
     }
     return '<li class="task' + (done ? ' done' : '') + '">' +
       '<div class="task-row"><input type="checkbox" class="check" aria-label="Terminé" data-action="task" data-n="' + day.n + '" data-i="' + i + '"' + (done ? ' checked' : '') + '>' +
@@ -218,6 +328,13 @@
           '<div class="small">' + (ready ? 'Au moins ' + READY_SCORE + '/40 sur ' + READY_COUNT + ' séries de suite. Tu peux réserver ta date.' :
             rs + ' série' + (rs > 1 ? 's' : '') + ' de suite à ' + READY_SCORE + ' ou plus. Il en faut ' + READY_COUNT + ' avant de s\'inscrire.') + '</div></div>' +
           '<div class="ready-dots" aria-hidden="true">' + dots + '</div></div>' +
+        (() => {
+          const ns = numStats();
+          return '<button class="num-mini" data-action="goto-chiffres"><div style="flex:1;min-width:0"><b>Chiffres maîtrisés : ' + ns.mastered + ' / ' + ns.total + '</b>' +
+            '<div class="progress" style="margin-top:6px"><span style="width:' + (ns.mastered / ns.total * 100).toFixed(1) + '%;background:var(--green)"></span></div>' +
+            '<div class="small muted" style="margin-top:4px">' + (ns.due ? ns.due + ' à revoir aujourd\'hui' : ns.fresh ? ns.fresh + ' pas encore vus' : 'Tout est à jour') + '</div></div>' +
+            '<span class="chev" aria-hidden="true">›</span></button>';
+        })() +
       '</div>' +
       (allDone ? '<div class="card celebrate"><b>Plan terminé, bravo !</b><p class="muted small">Continue les séries d\'examen jusqu\'au jour J pour garder le rythme.</p></div>' : '') +
       '<div class="card" id="todayCard">' + renderDay(day, { current: true }) + '</div>' +
@@ -363,6 +480,132 @@
       '</div>';
   }
 
+  /* ---------- Vue : Chiffres ---------- */
+  let calc = { v: 90, wet: false, tired: false };
+  function calcHTML() {
+    const d = calc.v / 10, t = calc.tired ? 2 : 1;
+    const react = Math.round(d * 3 * t);
+    const brake = Math.round(d * d * (calc.wet ? 1.5 : 1) - d * 3);
+    const stop = react + brake;
+    const safe = Math.round(d * 6);
+    const max = 380;
+    const bar = (m, cls) => '<div class="calc-bar ' + cls + '" style="width:' + Math.max(2, m / max * 100).toFixed(1) + '%"></div>';
+    return '<div class="calc-out">' +
+      '<div class="calc-row"><span>Réaction (' + t + ' s)</span><div class="calc-track">' + bar(react, 'r') + '</div><b>' + react + ' m</b></div>' +
+      '<div class="calc-row"><span>Freinage</span><div class="calc-track">' + bar(brake, 'f') + '</div><b>' + brake + ' m</b></div>' +
+      '<div class="calc-row total"><span>Arrêt total</span><div class="calc-track">' + bar(react, 'r') + bar(brake, 'f') + '</div><b>' + stop + ' m</b></div>' +
+      '<div class="calc-row"><span>Sécurité (2 s)</span><div class="calc-track">' + bar(safe, 's') + '</div><b>' + safe + ' m</b></div></div>' +
+      '<div class="calc-formula"><div><b>Réaction</b> : ' + d + ' × 3' + (t === 2 ? ' × 2' : '') + ' = ' + react + ' m</div>' +
+      '<div><b>Arrêt</b> : ' + d + ' × ' + d + (calc.wet ? ' × 1,5' : '') + ' = ' + Math.round(d * d * (calc.wet ? 1.5 : 1)) + ' m' + (t === 2 ? ' + ' + Math.round(d * 3) + ' m de réaction en plus' : '') + '</div>' +
+      '<div><b>Sécurité</b> : ' + d + ' × 6 = ' + safe + ' m</div>' +
+      '<div class="muted small" style="margin-top:4px">≈ ' + Math.round(stop / 4.5) + ' longueurs de voiture pour s\'arrêter.</div></div>';
+  }
+
+  function renderChiffres() {
+    const st = numStats();
+    const weak = weakNumCat();
+    const cats = NUM_CATS.map(c => {
+      const s = numStats(c.id);
+      return '<div class="num-cat"><div class="num-cat-head"><span class="num-icon" aria-hidden="true">' + c.icon + '</span><div style="flex:1;min-width:0"><b>' + esc(c.name) + '</b>' +
+        '<div class="small muted">' + s.mastered + '/' + s.total + ' maîtrisés' + (s.due ? ' · ' + s.due + ' à revoir' : '') + '</div></div>' +
+        '<button class="btn small" data-action="num-start" data-cat="' + c.id + '">S\'entraîner</button></div>' +
+        '<div class="progress"><span style="width:' + (s.mastered / s.total * 100).toFixed(1) + '%;background:var(--green)"></span></div></div>';
+    }).join('');
+    const ref = NUM_CATS.map(c =>
+      '<details class="fiche"><summary>' + c.icon + ' ' + esc(c.name) + '</summary><div class="fiche-body"><div class="num-ref">' +
+      NUM_CARDS.filter(x => x.cat === c.id).map(x =>
+        '<div class="num-ref-row' + (numMastered(x.id) ? ' ok' : '') + '"><div class="small">' + esc(x.q) + '</div><b>' + esc(x.a) + '</b>' +
+        '<div class="small muted">' + esc(x.tip) + '</div></div>').join('') + '</div></div></details>').join('');
+
+    $('#view-chiffres').innerHTML =
+      '<div class="card"><div class="card-head"><h2>Les chiffres</h2><span class="small muted">' + st.total + ' cartes</span></div>' +
+        '<p class="small muted">Vitesses, distances, alcool, amendes, points, pourcentages. Une carte ratée revient le jour même, une carte réussie revient de plus en plus tard. Elle est maîtrisée après ' + NUM_MASTERED + ' réussites de suite.</p>' +
+        '<div class="stats" style="margin:10px 0 12px">' +
+          '<div class="stat"><b>' + st.mastered + '</b><span>Maîtrisés</span></div>' +
+          '<div class="stat"><b>' + st.due + '</b><span>À revoir aujourd\'hui</span></div>' +
+          '<div class="stat"><b>' + st.fresh + '</b><span>Jamais vus</span></div>' +
+          '<div class="stat"><b style="font-size:1rem">' + (weak ? esc(numCat(weak).name) : '—') + '</b><span>Le plus fragile</span></div>' +
+        '</div>' +
+        '<button class="btn primary block" data-action="num-start">Session de ' + NUM_SESSION + ' questions</button></div>' +
+      '<div class="card"><div class="card-head"><h2>Par catégorie</h2></div><div class="num-cats">' + cats + '</div></div>' +
+      '<div class="card"><div class="card-head"><h2>Calculateur de distances</h2></div>' +
+        '<p class="small muted">Pour comprendre d\'où viennent les formules. Bouge le curseur et regarde comment la distance d\'arrêt explose avec la vitesse.</p>' +
+        '<div class="field" style="margin-top:8px"><label for="calcV">Vitesse : <span id="calcVal">' + calc.v + '</span> km/h</label>' +
+          '<input type="range" id="calcV" min="50" max="130" step="10" value="' + calc.v + '"></div>' +
+        '<div class="btn-row" style="margin-bottom:10px">' +
+          '<label class="toggle"><input type="checkbox" id="calcWet"' + (calc.wet ? ' checked' : '') + '> Route mouillée</label>' +
+          '<label class="toggle"><input type="checkbox" id="calcTired"' + (calc.tired ? ' checked' : '') + '> Fatigué ou distrait</label></div>' +
+        '<div id="calcOut">' + calcHTML() + '</div>' +
+        '<div class="legend"><span><i style="background:var(--yellow)"></i>Réaction</span><span><i style="background:var(--red)"></i>Freinage</span><span><i style="background:var(--blue)"></i>Distance de sécurité</span></div>' +
+      '</div>' +
+      '<h3 style="margin:8px 4px 0">Tous les chiffres, avec les astuces</h3>' +
+      '<p class="small muted" style="margin:0 4px">En vert : ceux que tu maîtrises déjà.</p>' + ref;
+
+    const upd = () => { $('#calcVal').textContent = calc.v; $('#calcOut').innerHTML = calcHTML(); };
+    $('#calcV').addEventListener('input', e => { calc.v = +e.target.value; upd(); });
+    $('#calcWet').addEventListener('change', e => { calc.wet = e.target.checked; upd(); });
+    $('#calcTired').addEventListener('change', e => { calc.tired = e.target.checked; upd(); });
+  }
+
+  /* Session de quiz sur les chiffres. Une carte ratée revient une fois en fin de session. */
+  function startNum(opts) {
+    const items = numQueue(opts.cat).map(id => ({ id, retry: false }));
+    const sess = { items, i: 0, good: 0, missed: [], taskRef: opts.taskRef || null, cat: opts.cat || null };
+    const title = opts.cat ? numCat(opts.cat).name : 'Session de chiffres';
+    const step = () => {
+      if (sess.i >= sess.items.length) return finish();
+      const item = sess.items[sess.i];
+      const c = numCard(item.id);
+      const choices = shuffle([c.a].concat(c.w));
+      const s = numState(c.id);
+      $('#modalBody').innerHTML =
+        '<div class="small muted" style="margin-bottom:8px">Question ' + (sess.i + 1) + ' sur ' + sess.items.length + '</div>' +
+        '<div class="progress" style="margin-bottom:12px"><span style="width:' + (sess.i / sess.items.length * 100) + '%"></span></div>' +
+        '<div class="flash"><div class="day-meta"><span class="chip blue">' + numCat(c.cat).icon + ' ' + esc(numCat(c.cat).name) + '</span>' +
+          (item.retry ? '<span class="chip red">Deuxième essai</span>' : s ? '<span class="chip">' + Math.min(s.box, NUM_MASTERED) + '/' + NUM_MASTERED + '</span>' : '<span class="chip yellow">Nouveau</span>') + '</div>' +
+        '<div class="flash-q">' + esc(c.q) + '</div>' +
+        '<div class="choices">' + choices.map(ch => '<button class="choice" data-val="' + esc(ch) + '">' + esc(ch) + '</button>').join('') + '</div>' +
+        '<div id="numFb"></div></div>';
+      $('#modalBody').querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => {
+        const ok = btn.dataset.val === c.a;
+        $('#modalBody').querySelectorAll('.choice').forEach(b => {
+          b.disabled = true;
+          if (b.dataset.val === c.a) b.classList.add('right');
+          else if (b === btn) b.classList.add('wrong');
+        });
+        if (!item.retry) {
+          numAnswer(c.id, ok);
+          if (ok) sess.good++;
+          else { sess.missed.push(c.id); sess.items.push({ id: c.id, retry: true }); }
+        }
+        touch(); save();
+        $('#numFb').innerHTML = '<div class="num-fb ' + (ok ? 'ok' : 'ko') + '"><b>' + (ok ? 'Bonne réponse !' : 'La bonne réponse : ' + esc(c.a)) + '</b>' +
+          '<div class="small" style="margin-top:4px">💡 ' + esc(c.tip) + '</div>' +
+          (!ok && !item.retry ? '<div class="small muted" style="margin-top:4px">Cette question reviendra à la fin de la session.</div>' : '') + '</div>' +
+          '<button class="btn primary block" id="numNext" style="margin-top:10px">' + (sess.i + 1 < sess.items.length ? 'Suivante' : 'Voir le résultat') + '</button>';
+        $('#numNext').addEventListener('click', () => { sess.i++; step(); });
+        $('#numNext').focus();
+      }));
+    };
+    const finish = () => {
+      if (sess.taskRef) state.tasks[tkey(sess.taskRef.n, sess.taskRef.i)] = true;
+      touch(); save();
+      const firstTry = sess.items.filter(x => !x.retry).length;
+      const st = numStats(sess.cat);
+      $('#modalBody').innerHTML = '<div class="celebrate"><b>' + sess.good + ' / ' + firstTry + ' du premier coup</b>' +
+        '<p class="muted small">' + st.mastered + ' / ' + st.total + ' chiffres maîtrisés' + (sess.cat ? ' dans cette catégorie' : '') + '</p></div>' +
+        (sess.missed.length ? '<h3 style="margin:10px 0 6px">À retenir</h3><div class="num-ref">' + sess.missed.map(id => {
+          const c = numCard(id);
+          return '<div class="num-ref-row"><div class="small">' + esc(c.q) + '</div><b>' + esc(c.a) + '</b><div class="small muted">💡 ' + esc(c.tip) + '</div></div>';
+        }).join('') + '</div>' : '<p class="small" style="text-align:center">Aucune erreur, bravo !</p>') +
+        '<div class="btn-row" style="margin-top:12px"><button class="btn" style="flex:1" data-close>Fermer</button>' +
+        '<button class="btn primary" style="flex:1" id="numAgain">Une autre session</button></div>';
+      $('#numAgain').addEventListener('click', () => startNum({ cat: sess.cat }));
+    };
+    openModal(title, '', { kind: 'num' });
+    step();
+  }
+
   /* ---------- Vue : Fiches ---------- */
   function renderFiches() {
     let html = '<div class="card"><h2>Fiches</h2><p class="small muted" style="margin-top:6px">Aide-mémoire, méthode et résumé de chaque thème. Elles restent disponibles hors connexion.</p></div>';
@@ -382,7 +625,7 @@
 
   /* ---------- Navigation ---------- */
   let currentTab = 'today';
-  const renderers = { today: renderToday, plan: renderPlan, scores: renderScores, carnet: renderCarnet, fiches: renderFiches };
+  const renderers = { today: renderToday, plan: renderPlan, chiffres: renderChiffres, scores: renderScores, carnet: renderCarnet, fiches: renderFiches };
   function showTab(tab) {
     currentTab = tab;
     document.querySelectorAll('.view').forEach(v => { v.hidden = v.dataset.view !== tab; });
@@ -555,13 +798,14 @@
     const imp = $('#importFile');
     if (imp) imp.addEventListener('change', () => {
       const f = imp.files[0]; if (!f) return;
+      if (f.size > 5 * 1024 * 1024) { toast('Fichier trop volumineux pour une sauvegarde'); return; }
       const r = new FileReader();
       r.onload = () => {
         try {
           const data = JSON.parse(r.result);
           if (!data || typeof data !== 'object' || !data.profile) throw new Error('format');
           if (!confirm('Remplacer toutes les données actuelles par cette sauvegarde ?')) return;
-          state = Object.assign(defaults(), data); save(); applyTheme(); closeModal(); toast('Sauvegarde importée');
+          state = sanitize(data); save(); applyTheme(); closeModal(); toast('Sauvegarde importée');
         } catch (e) { toast('Fichier de sauvegarde invalide'); }
       };
       r.readAsText(f);
@@ -633,6 +877,8 @@
     else if (a === 'review') startReview(t.dataset.n ? { n, i } : null);
     else if (a === 'open-day') { modalCtx = { kind: 'day', n }; openModal('Jour ' + n, '', modalCtx); renderModalDay(); $('#modalTitle').textContent = 'Jour ' + n; }
     else if (a === 'goto-plan') showTab('plan');
+    else if (a === 'goto-chiffres') showTab('chiffres');
+    else if (a === 'num-start') startNum({ cat: t.dataset.cat || null, taskRef: t.dataset.n ? { n, i } : null });
     else if (a === 'goto-fiches') { closeModal(); showTab('fiches'); }
     else if (a === 'export') {
       const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
